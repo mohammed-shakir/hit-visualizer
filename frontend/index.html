@@ -2,8 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Hit Visualizer – Pulsing Map</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Live Hit Visualizer</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
 
     <link
       rel="stylesheet"
@@ -11,6 +14,16 @@
     />
 
     <style>
+      :root {
+        --bg-color: #020617;
+        --card-bg: rgba(15, 23, 42, 0.9);
+        --card-border: rgba(148, 163, 184, 0.4);
+        --text-muted: #9ca3af;
+        --accent: #38bdf8;
+        --accent-soft: rgba(56, 189, 248, 0.4);
+        --danger: #f97373;
+      }
+
       html,
       body {
         margin: 0;
@@ -20,9 +33,13 @@
           system-ui,
           -apple-system,
           BlinkMacSystemFont,
-          "Segoe UI",
+          "SF Pro Text",
+          "Inter",
           sans-serif;
-        background: #000;
+        background:
+          radial-gradient(circle at top, #020617 0, #020617 40%, #020617 100%),
+          var(--bg-color);
+        color: #e5e7eb;
       }
 
       #map {
@@ -30,106 +47,148 @@
         height: 100%;
       }
 
-      /* Small overlay for basic status info (optional) */
       .status-overlay {
-        position: absolute;
-        top: 8px;
-        left: 8px;
-        padding: 6px 10px;
-        background: rgba(0, 0, 0, 0.6);
-        color: #fff;
-        font-size: 12px;
-        border-radius: 4px;
-        z-index: 1;
+        position: fixed;
+        bottom: 1.5rem;
+        left: 1.5rem;
+        padding: 0.4rem 0.9rem 0.4rem 0.7rem;
+        background: var(--card-bg);
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        border-radius: 999px;
+        border: 1px solid var(--card-border);
+        backdrop-filter: blur(12px);
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        z-index: 10;
         pointer-events: none;
+        box-shadow:
+          0 18px 45px rgba(15, 23, 42, 0.9),
+          0 0 0 1px rgba(15, 23, 42, 0.8);
+      }
+
+      .status-count {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 0.25rem;
+        margin-left: 0.9rem;
+        padding-left: 0.9rem;
+        border-left: 1px solid rgba(148, 163, 184, 0.35);
+        font-feature-settings:
+          "tnum" 1,
+          "lnum" 1;
+      }
+
+      .status-count-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--text-muted);
+        opacity: 0.8;
+      }
+
+      .status-count-value {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #f9fafb;
+      }
+
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        box-shadow: 0 0 16px rgba(56, 189, 248, 0.9);
+        flex-shrink: 0;
+        transition:
+          background 180ms ease-out,
+          box-shadow 180ms ease-out;
+      }
+
+      .status-overlay[data-status="connected"] .status-dot {
+        background: var(--accent);
+        box-shadow: 0 0 18px rgba(56, 189, 248, 0.95);
+      }
+
+      .status-overlay[data-status="disconnected"] .status-dot,
+      .status-overlay[data-status="error"] .status-dot {
+        background: var(--danger);
+        box-shadow: 0 0 12px rgba(248, 113, 113, 0.9);
+      }
+
+      .status-text {
+        opacity: 0.9;
+      }
+
+      .maplibregl-ctrl-top-right {
+        margin-top: 1.25rem;
+        margin-right: 1.25rem;
+      }
+
+      .maplibregl-ctrl-group {
+        border-radius: 999px;
+        overflow: hidden;
+        border: 1px solid var(--card-border);
+        box-shadow:
+          0 12px 30px rgba(15, 23, 42, 0.85),
+          0 0 0 1px rgba(15, 23, 42, 1);
+        background: rgba(15, 23, 42, 0.9);
+      }
+
+      .maplibregl-ctrl-group button {
+        width: 34px;
+        height: 34px;
+        background: transparent;
+      }
+
+      .maplibregl-ctrl-group button + button {
+        border-top: 1px solid rgba(30, 41, 59, 0.9);
+      }
+
+      .maplibregl-ctrl button .maplibregl-ctrl-icon {
+        filter: invert(80%);
+        opacity: 0.9;
       }
     </style>
   </head>
   <body>
     <div id="map"></div>
-    <div class="status-overlay" id="status">Connecting to WebSocket…</div>
 
-    <!-- MapLibre GL JS -->
+    <div class="status-overlay" id="status" data-status="connecting">
+      <span class="status-dot"></span>
+      <span class="status-text">Connecting…</span>
+      <span class="status-count">
+        <span class="status-count-label">Hits</span>
+        <span class="status-count-value" id="hit-count">0</span>
+      </span>
+    </div>
+
     <script src="https://unpkg.com/maplibre-gl@5.13.0/dist/maplibre-gl.js"></script>
 
     <script>
       (function () {
-        // Create the map centered over Sweden
         const map = new maplibregl.Map({
           container: "map",
-          style: "https://demotiles.maplibre.org/style.json",
-          center: [18.06, 63.5], // lon, lat
+          style:
+            "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+          center: [18.06, 63.5],
           zoom: 4,
         });
 
         map.addControl(new maplibregl.NavigationControl(), "top-right");
 
         const statusEl = document.getElementById("status");
+        const statusTextEl = statusEl
+          ? statusEl.querySelector(".status-text")
+          : null;
 
-        // Define a pulsing-dot image using a canvas
-        const size = 120;
-        const pulsingDot = {
-          width: size,
-          height: size,
-          data: new Uint8ClampedArray(size * size * 4),
-          context: null,
-
-          // Called once when the image is added
-          onAdd: function (map) {
-            const canvas = document.createElement("canvas");
-            canvas.width = this.width;
-            canvas.height = this.height;
-            this.context = canvas.getContext("2d");
-          },
-
-          // Called every frame to update the image
-          render: function () {
-            const ctx = this.context;
-            const w = this.width;
-            const h = this.height;
-            const centerX = w / 2;
-            const centerY = h / 2;
-
-            const now = performance.now();
-            const cycle = 1000; // ms for one pulse
-            const t = (now % cycle) / cycle;
-
-            ctx.clearRect(0, 0, w, h);
-
-            // Outer ring expands and fades out
-            const maxRadius = (w / 2) * 0.9;
-            const minRadius = (w / 2) * 0.25;
-            const outerRadius = minRadius + t * (maxRadius - minRadius);
-            const outerAlpha = 1 - t;
-
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, outerRadius, 0, Math.PI * 2);
-            ctx.fillStyle = "rgba(0, 136, 255," + outerAlpha * 0.6 + ")";
-            ctx.fill();
-
-            // Solid inner circle
-            const innerRadius = (w / 2) * 0.18;
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, innerRadius, 0, Math.PI * 2);
-            ctx.fillStyle = "rgba(0, 136, 255, 1)";
-            ctx.fill();
-
-            // Thin white outline
-            ctx.lineWidth = 2;
-            ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-            ctx.stroke();
-
-            const imageData = ctx.getImageData(0, 0, w, h);
-            this.data.set(imageData.data);
-            map.triggerRepaint();
-
-            return true;
-          },
-        };
+        const hitCountEl = document.getElementById("hit-count");
+        let hitCount = 0;
 
         map.on("load", function () {
-          map.addImage("pulsing-dot", pulsingDot, { pixelRatio: 2 });
-
           map.addSource("hits", {
             type: "geojson",
             data: {
@@ -138,115 +197,203 @@
             },
           });
 
+          // Soft outer glow
           map.addLayer({
-            id: "hits-layer",
-            type: "symbol",
+            id: "hits-glow",
+            type: "circle",
             source: "hits",
-            layout: {
-              "icon-image": "pulsing-dot",
-              "icon-size": 1,
-              "icon-allow-overlap": true,
+            paint: {
+              "circle-radius": [
+                "interpolate",
+                ["linear"],
+                ["get", "ageMs"],
+                0,
+                0,
+                150,
+                9,
+                1000,
+                0,
+              ],
+              "circle-color": "rgba(56, 189, 248, 1)", // cyan
+              "circle-opacity": [
+                "interpolate",
+                ["linear"],
+                ["get", "ageMs"],
+                0,
+                0,
+                60,
+                0.45,
+                1000,
+                0,
+              ],
+              "circle-blur": 1.8,
+            },
+          });
+
+          // Tiny bright core
+          map.addLayer({
+            id: "hits-core",
+            type: "circle",
+            source: "hits",
+            paint: {
+              "circle-radius": 3,
+              "circle-color": "rgba(241, 245, 249, 1)", // near white
+              "circle-stroke-color": "rgba(56, 189, 248, 0.9)",
+              "circle-stroke-width": 0.8,
+              "circle-opacity": [
+                "interpolate",
+                ["linear"],
+                ["get", "ageMs"],
+                0,
+                0,
+                40,
+                0.95,
+                1000,
+                0,
+              ],
             },
           });
 
           const hits = [];
-          const lifetimeMs = 5000; // keep hits for ~5 seconds
+          const lifetimeMs = 1000; // ms
+          const src = map.getSource("hits");
 
-          function updateHits() {
-            const now = Date.now();
+          const featureCollection = {
+            type: "FeatureCollection",
+            features: [],
+          };
 
-            for (let i = hits.length - 1; i >= 0; i--) {
-              if (now - hits[i].added > lifetimeMs) {
-                hits.splice(i, 1);
-              }
+          const UPDATE_INTERVAL_MS = 33;
+          let lastUpdate = 0;
+
+          function updateHits(now) {
+            if (!src) {
+              requestAnimationFrame(updateHits);
+              return;
             }
 
-            const features = hits.map(function (h) {
-              return {
+            if (now - lastUpdate < UPDATE_INTERVAL_MS) {
+              requestAnimationFrame(updateHits);
+              return;
+            }
+            lastUpdate = now;
+
+            let write = 0;
+            for (let read = 0; read < hits.length; read++) {
+              if (now - hits[read].added <= lifetimeMs) {
+                if (write !== read) {
+                  hits[write] = hits[read];
+                }
+                write++;
+              }
+            }
+            hits.length = write;
+
+            const feats = featureCollection.features;
+            const targetLen = hits.length;
+
+            for (let i = feats.length; i < targetLen; i++) {
+              feats.push({
                 type: "Feature",
                 geometry: {
                   type: "Point",
-                  coordinates: [h.lon, h.lat],
+                  coordinates: [0, 0],
                 },
                 properties: {
-                  layer: h.layer || "",
-                  ts: h.ts || "",
-                  ageMs: now - h.added,
+                  ageMs: 0,
                 },
-              };
-            });
-
-            const src = map.getSource("hits");
-            if (src) {
-              src.setData({
-                type: "FeatureCollection",
-                features: features,
               });
             }
+
+            if (feats.length > targetLen) {
+              feats.length = targetLen;
+            }
+
+            for (let i = 0; i < targetLen; i++) {
+              const h = hits[i];
+              const f = feats[i];
+
+              const coords = f.geometry.coordinates;
+              coords[0] = h.lon;
+              coords[1] = h.lat;
+              f.properties.ageMs = now - h.added;
+            }
+
+            src.setData(featureCollection);
 
             requestAnimationFrame(updateHits);
           }
 
-          updateHits();
+          requestAnimationFrame(updateHits);
 
           const wsProtocol =
             window.location.protocol === "https:" ? "wss:" : "ws:";
           const wsUrl = wsProtocol + "//" + window.location.host + "/ws";
           const ws = new WebSocket(wsUrl);
 
+          function setStatus(state, text) {
+            if (!statusEl || !statusTextEl) return;
+            statusEl.dataset.status = state;
+            statusTextEl.textContent = text;
+          }
+
           ws.onopen = function () {
-            if (statusEl) {
-              statusEl.textContent = "Connected to WebSocket";
-            }
+            setStatus("connected", "Live");
             console.log("WebSocket connected:", wsUrl);
           };
 
           ws.onclose = function () {
-            if (statusEl) {
-              statusEl.textContent = "WebSocket connection closed";
-            }
+            setStatus("disconnected", "Disconnected");
             console.log("WebSocket closed");
           };
 
           ws.onerror = function (err) {
-            if (statusEl) {
-              statusEl.textContent = "WebSocket error (see console)";
-            }
-            console.error("WebSocket error:", err);
+            setStatus("error", "Error");
+            console.error("WebSocket error", err);
           };
+
+          let dropCounter = 0;
+          const ENABLE_SAMPLING = false;
+          const SAMPLE_EVERY_N = 2;
+          const MAX_IN_FLIGHT_HITS = 1500;
 
           ws.onmessage = function (event) {
             try {
+              if (ENABLE_SAMPLING && hits.length > MAX_IN_FLIGHT_HITS) {
+                dropCounter++;
+                if (dropCounter % SAMPLE_EVERY_N !== 0) {
+                  return;
+                }
+              }
+
               const data = JSON.parse(event.data);
 
               if (
                 typeof data.lon !== "number" ||
                 typeof data.lat !== "number"
               ) {
-                // Ignore malformed hits
                 return;
               }
 
-              const hit = {
+              hits.push({
                 lon: data.lon,
                 lat: data.lat,
-                layer: data.layer || "",
-                ts: data.timestamp || data.ts || "",
-                added: Date.now(),
-              };
+                added: performance.now(),
+              });
 
-              hits.push(hit);
+              hitCount++;
+              if (hitCountEl) {
+                hitCountEl.textContent = hitCount.toLocaleString("sv-SE");
+              }
             } catch (e) {
-              console.error("Failed to parse hit message:", e, event.data);
+              console.error("Failed to parse hit message", e, event.data);
             }
           };
 
           window.addEventListener("beforeunload", function () {
             try {
               ws.close();
-            } catch (e) {
-              // ignore
-            }
+            } catch (e) {}
           });
         });
       })();
