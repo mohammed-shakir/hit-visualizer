@@ -1,0 +1,21 @@
+services:
+  hit-visualizer:
+    build: .
+    container_name: hit-visualizer
+    environment:
+      # HTTP server listen address inside the container
+      - HTTP_ADDR=:8081
+
+      # Kafka connection
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_TOPIC=spatial-hit-events
+      - LOG_LEVEL=info
+    ports:
+      - "8081:8081"
+    networks:
+      - gisnet
+
+networks:
+  gisnet:
+    external: true
+    name: h3-spatial-cache-dev_gisnet

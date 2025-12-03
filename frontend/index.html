@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hit Visualizer – Pulsing Map</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/maplibre-gl@5.13.0/dist/maplibre-gl.css"
+    />
+
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        background: #000;
+      }
+
+      #map {
+        width: 100%;
+        height: 100%;
+      }
+
+      /* Small overlay for basic status info (optional) */
+      .status-overlay {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        padding: 6px 10px;
+        background: rgba(0, 0, 0, 0.6);
+        color: #fff;
+        font-size: 12px;
+        border-radius: 4px;
+        z-index: 1;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+    <div class="status-overlay" id="status">Connecting to WebSocket…</div>
+
+    <!-- MapLibre GL JS -->
+    <script src="https://unpkg.com/maplibre-gl@5.13.0/dist/maplibre-gl.js"></script>
+
+    <script>
+      (function () {
+        // Create the map centered over Sweden
+        const map = new maplibregl.Map({
+          container: "map",
+          style: "https://demotiles.maplibre.org/style.json",
+          center: [18.06, 63.5], // lon, lat
+          zoom: 4,
+        });
+
+        map.addControl(new maplibregl.NavigationControl(), "top-right");
+
+        const statusEl = document.getElementById("status");
+
+        // Define a pulsing-dot image using a canvas
+        const size = 120;
+        const pulsingDot = {
+          width: size,
+          height: size,
+          data: new Uint8ClampedArray(size * size * 4),
+          context: null,
+
+          // Called once when the image is added
+          onAdd: function (map) {
+            const canvas = document.createElement("canvas");
+            canvas.width = this.width;
+            canvas.height = this.height;
+            this.context = canvas.getContext("2d");
+          },
+
+          // Called every frame to update the image
+          render: function () {
+            const ctx = this.context;
+            const w = this.width;
+            const h = this.height;
+            const centerX = w / 2;
+            const centerY = h / 2;
+
+            const now = performance.now();
+            const cycle = 1000; // ms for one pulse
+            const t = (now % cycle) / cycle;
+
+            ctx.clearRect(0, 0, w, h);
+
+            // Outer ring expands and fades out
+            const maxRadius = (w / 2) * 0.9;
+            const minRadius = (w / 2) * 0.25;
+            const outerRadius = minRadius + t * (maxRadius - minRadius);
+            const outerAlpha = 1 - t;
+
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, outerRadius, 0, Math.PI * 2);
+            ctx.fillStyle = "rgba(0, 136, 255," + outerAlpha * 0.6 + ")";
+            ctx.fill();
+
+            // Solid inner circle
+            const innerRadius = (w / 2) * 0.18;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, innerRadius, 0, Math.PI * 2);
+            ctx.fillStyle = "rgba(0, 136, 255, 1)";
+            ctx.fill();
+
+            // Thin white outline
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+            ctx.stroke();
+
+            const imageData = ctx.getImageData(0, 0, w, h);
+            this.data.set(imageData.data);
+            map.triggerRepaint();
+
+            return true;
+          },
+        };
+
+        map.on("load", function () {
+          map.addImage("pulsing-dot", pulsingDot, { pixelRatio: 2 });
+
+          map.addSource("hits", {
+            type: "geojson",
+            data: {
+              type: "FeatureCollection",
+              features: [],
+            },
+          });
+
+          map.addLayer({
+            id: "hits-layer",
+            type: "symbol",
+            source: "hits",
+            layout: {
+              "icon-image": "pulsing-dot",
+              "icon-size": 1,
+              "icon-allow-overlap": true,
+            },
+          });
+
+          const hits = [];
+          const lifetimeMs = 5000; // keep hits for ~5 seconds
+
+          function updateHits() {
+            const now = Date.now();
+
+            for (let i = hits.length - 1; i >= 0; i--) {
+              if (now - hits[i].added > lifetimeMs) {
+                hits.splice(i, 1);
+              }
+            }
+
+            const features = hits.map(function (h) {
+              return {
+                type: "Feature",
+                geometry: {
+                  type: "Point",
+                  coordinates: [h.lon, h.lat],
+                },
+                properties: {
+                  layer: h.layer || "",
+                  ts: h.ts || "",
+                  ageMs: now - h.added,
+                },
+              };
+            });
+
+            const src = map.getSource("hits");
+            if (src) {
+              src.setData({
+                type: "FeatureCollection",
+                features: features,
+              });
+            }
+
+            requestAnimationFrame(updateHits);
+          }
+
+          updateHits();
+
+          const wsProtocol =
+            window.location.protocol === "https:" ? "wss:" : "ws:";
+          const wsUrl = wsProtocol + "//" + window.location.host + "/ws";
+          const ws = new WebSocket(wsUrl);
+
+          ws.onopen = function () {
+            if (statusEl) {
+              statusEl.textContent = "Connected to WebSocket";
+            }
+            console.log("WebSocket connected:", wsUrl);
+          };
+
+          ws.onclose = function () {
+            if (statusEl) {
+              statusEl.textContent = "WebSocket connection closed";
+            }
+            console.log("WebSocket closed");
+          };
+
+          ws.onerror = function (err) {
+            if (statusEl) {
+              statusEl.textContent = "WebSocket error (see console)";
+            }
+            console.error("WebSocket error:", err);
+          };
+
+          ws.onmessage = function (event) {
+            try {
+              const data = JSON.parse(event.data);
+
+              if (
+                typeof data.lon !== "number" ||
+                typeof data.lat !== "number"
+              ) {
+                // Ignore malformed hits
+                return;
+              }
+
+              const hit = {
+                lon: data.lon,
+                lat: data.lat,
+                layer: data.layer || "",
+                ts: data.timestamp || data.ts || "",
+                added: Date.now(),
+              };
+
+              hits.push(hit);
+            } catch (e) {
+              console.error("Failed to parse hit message:", e, event.data);
+            }
+          };
+
+          window.addEventListener("beforeunload", function () {
+            try {
+              ws.close();
+            } catch (e) {
+              // ignore
+            }
+          });
+        });
+      })();
+    </script>
+  </body>
+</html>
