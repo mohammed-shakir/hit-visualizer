@@ -7,8 +7,8 @@ WORKDIR /app
 ENV CGO_ENABLED=1
 
 RUN apk add --no-cache \
-  git=2.49.1-r0 \
-  build-base=0.5-r3
+  git \
+  build-base
 
 COPY go.mod go.sum ./
 RUN go mod download
@@ -27,7 +27,7 @@ COPY --from=builder /app/server ./server
 
 COPY frontend ./frontend
 
-RUN apk add --no-cache ca-certificates=20250911-r0
+RUN apk add --no-cache ca-certificates
 
 EXPOSE 8081
 

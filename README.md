@@ -12,6 +12,8 @@ The server is configured via environment variables:
   `spatial-hit-events`).
 - `LOG_LEVEL`: log level (`debug`, `info`, `warn`, `error`), default `info`.
 
+Note: Make sure that your browser's graphics acceleration is on (WebGL enabled)
+
 ## Running locally
 
 ```bash
